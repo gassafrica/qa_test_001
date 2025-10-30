@@ -20,11 +20,9 @@ app.get(
   async (_req: Request, res: ExpressResponse, next: NextFunction) => {
     try {
       const users = await loadUsers();
-
       for (const name of users) {
         await validateUser(name);
       }
-
       res.json({ validated: users.length });
     } catch (error) {
       next(error);
@@ -42,21 +40,21 @@ app.use(
     if (res.headersSent) {
       return;
     }
-
     const message =
       error instanceof Error
         ? error.message
         : "Unexpected error while validating user names.";
-
     res.status(500).json({ error: message });
   },
 );
 
-const port = Number(process.env.PORT ?? 3000);
-
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+// Only start the server if this file is run directly (not imported for testing)
+if (require.main === module) {
+  const port = Number(process.env.PORT ?? 3000);
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
 
 type RemoteResponse = {
   message?: string;
@@ -68,11 +66,24 @@ async function loadUsers(): Promise<string[]> {
   return JSON.parse(raw) as string[];
 }
 
+// This function cleans up names before sending them to the validation API
+// The API rejects special characters like apostrophes and accents even though they're valid in real names
+// So we strip them out while keeping letters and spaces
+export function sanitizeName(name: string): string {
+  return name
+    .normalize("NFD") // break down accented characters into base + accent
+    .replace(/[\u0300-\u036f]/g, "") // strip out the accent marks
+    .replace(/[^a-zA-Z\s]/g, "") // remove anything that's not a letter or space
+    .replace(/\s+/g, " ") // collapse multiple spaces into one
+    .trim();
+}
+
 async function validateUser(name: string): Promise<void> {
-  const url = `${VALIDATION_URL}?name=${encodeURIComponent(name)}`;
-
+  // Clean the name before sending to the API
+  const sanitizedName = sanitizeName(name);
+  const url = `${VALIDATION_URL}?name=${encodeURIComponent(sanitizedName)}`;
+  
   let response: Response;
-
   try {
     response = await fetch(url);
   } catch (_error) {
@@ -81,12 +92,10 @@ async function validateUser(name: string): Promise<void> {
   }
 
   const message = await extractMessage(response);
-
   if (response.status !== 200) {
     console.error(`${name} - ${message}`);
     process.exit(1);
   }
-
   console.log(`${name} - ${message}`);
 }
 
@@ -99,8 +108,7 @@ async function extractMessage(response: Response): Promise<string> {
   } catch (_error) {
     // Ignore JSON parse errors, they are handled below.
   }
-
   return `Received status ${response.status}`;
 }
 
-export {};
+export { app };
